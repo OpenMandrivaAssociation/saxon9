@@ -3,7 +3,7 @@
 Summary:        Java XPath, XSLT 2.0 and XQuery implementation
 Name:           %{oname}9
 Version:        9.2.0.3
-Release:        %mkrel 3
+Release:        %mkrel 4
 # net.sf.saxon.om.XMLChar is from ASL-licensed Xerces
 License:        MPL
 Group:          Development/Java
@@ -114,7 +114,7 @@ rm -rf %{buildroot}
 # jars
 mkdir -p %{buildroot}%{_javadir}
 cp -p build/lib/%{oname}.jar %{buildroot}%{_javadir}/%{name}-%{version}.jar
-ln -s %{oname}-%{version}.jar %{buildroot}%{_javadir}/%{name}.jar
+ln -s %{name}-%{version}.jar %{buildroot}%{_javadir}/%{name}.jar
 
 # javadoc
 mkdir -p %{buildroot}%{_javadocdir}/%{name}-%{version}
