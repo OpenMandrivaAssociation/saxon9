@@ -3,7 +3,7 @@
 Summary:        Java XPath, XSLT 2.0 and XQuery implementation
 Name:           %{oname}9
 Version:        9.2.0.3
-Release:        %mkrel 1
+Release:        %mkrel 2
 # net.sf.saxon.om.XMLChar is from ASL-licensed Xerces
 License:        MPL
 Group:          Development/Java
@@ -113,24 +113,24 @@ rm -rf %{buildroot}
 
 # jars
 mkdir -p %{buildroot}%{_javadir}
-cp -p build/lib/%{oname}.jar %{buildroot}%{_javadir}/%{oname}-%{version}.jar
-ln -s %{oname}-%{version}.jar %{buildroot}%{_javadir}/%{oname}.jar
+cp -p build/lib/%{oname}.jar %{buildroot}%{_javadir}/%{name}-%{version}.jar
+ln -s %{oname}-%{version}.jar %{buildroot}%{_javadir}/%{name}.jar
 
 # javadoc
-mkdir -p %{buildroot}%{_javadocdir}/%{oname}-%{version}
-cp -pr build/api/* %{buildroot}%{_javadocdir}/%{oname}-%{version}
+mkdir -p %{buildroot}%{_javadocdir}/%{name}-%{version}
+cp -pr build/api/* %{buildroot}%{_javadocdir}/%{name}-%{version}
 
 # demo
-mkdir -p %{buildroot}%{_datadir}/%{oname}
-cp -pr samples/* %{buildroot}%{_datadir}/%{oname}
+mkdir -p %{buildroot}%{_datadir}/%{name}
+cp -pr samples/* %{buildroot}%{_datadir}/%{name}
 
 # scripts
 mkdir -p %{buildroot}%{_bindir}
-install -p -m755 %{SOURCE1} %{buildroot}%{_bindir}/%{oname}
-install -p -m755 %{SOURCE2} %{buildroot}%{_bindir}/%{oname}q
+install -p -m755 %{SOURCE1} %{buildroot}%{_bindir}/%{name}
+install -p -m755 %{SOURCE2} %{buildroot}%{_bindir}/%{name}q
 mkdir -p %{buildroot}%{_mandir}/man1
-install -p -m644 %{SOURCE4} %{buildroot}%{_mandir}/man1/%{oname}.1
-install -p -m644 %{SOURCE5} %{buildroot}%{_mandir}/man1/%{oname}q.1
+install -p -m644 %{SOURCE4} %{buildroot}%{_mandir}/man1/%{name}.1
+install -p -m644 %{SOURCE5} %{buildroot}%{_mandir}/man1/%{name}q.1
 
 # jaxp_transform_impl ghost symlink
 ln -s %{_sysconfdir}/alternatives \
@@ -141,7 +141,7 @@ rm -rf %{buildroot}
 
 %post
 update-alternatives --install %{_javadir}/jaxp_transform_impl.jar \
-  jaxp_transform_impl %{_javadir}/%{oname}.jar 25
+  jaxp_transform_impl %{_javadir}/%{name}.jar 25
 
 %preun
 {
@@ -151,8 +151,8 @@ update-alternatives --install %{_javadir}/jaxp_transform_impl.jar \
 
 %files
 %defattr(-,root,root,-)
-%{_javadir}/%{oname}.jar
-%{_javadir}/%{oname}-%{version}.jar
+%{_javadir}/%{name}.jar
+%{_javadir}/%{name}-%{version}.jar
 %ghost %{_javadir}/jaxp_transform_impl.jar
 
 %files manual
@@ -161,15 +161,15 @@ update-alternatives --install %{_javadir}/jaxp_transform_impl.jar \
 
 %files javadoc
 %defattr(-,root,root,-)
-%doc %{_javadocdir}/%{oname}-%{version}
+%doc %{_javadocdir}/%{name}-%{version}
 
 %files demo
 %defattr(-,root,root,-)
-%{_datadir}/%{oname}
+%{_datadir}/%{name}
 
 %files scripts
 %defattr(-,root,root,-)
-%{_bindir}/%{oname}
-%{_bindir}/%{oname}q
-%{_mandir}/man1/%{oname}.1*
-%{_mandir}/man1/%{oname}q.1*
+%{_bindir}/%{name}
+%{_bindir}/%{name}q
+%{_mandir}/man1/%{name}.1*
+%{_mandir}/man1/%{name}q.1*
