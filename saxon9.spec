@@ -3,7 +3,7 @@
 Summary:        Java XPath, XSLT 2.0 and XQuery implementation
 Name:           %{oname}9
 Version:        9.2.0.3
-Release:        %mkrel 2
+Release:        %mkrel 3
 # net.sf.saxon.om.XMLChar is from ASL-licensed Xerces
 License:        MPL
 Group:          Development/Java
@@ -34,7 +34,7 @@ Requires:       jaxp_parser_impl
 Requires:       update-alternatives
 Provides:       jaxp_transform_impl = %{version}-%{release}
 BuildArch:      noarch
-BuildRoot:      %{_tmppath}/%{oname}-%{version}-%{release}-buildroot
+BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-buildroot
 
 %description
 Saxon HE is Saxonica's non-schema-aware implementation of the XPath 2.0,
@@ -44,35 +44,35 @@ conformant implementation, providing all the mandatory features of
 those specifications and nearly all the optional features.
 
 %package manual
-Summary:	Manual for %{oname}
+Summary:	Manual for %{name}
 Group:		Development/Java
 
 %description manual
-Manual for %{oname}.
+Manual for %{name}.
 
 %package javadoc
-Summary:	Javadoc for %{oname}
+Summary:	Javadoc for %{name}
 Group:		Development/Java
 
 %description javadoc
-Javadoc for %{oname}.
+Javadoc for %{name}.
 
 %package demo
-Summary:	Demos for %{oname}
+Summary:	Demos for %{name}
 Group:		Development/Java
-Requires:	%{oname} = %{version}-%{release}
+Requires:	%{name} = %{version}-%{release}
 
 %description demo
-Demonstrations and samples for %{oname}.
+Demonstrations and samples for %{name}.
 
 %package scripts
-Summary:	Utility scripts for %{oname}
+Summary:	Utility scripts for %{name}
 Group:		Development/Java
 Requires:	jpackage-utils >= 0:1.5
-Requires:	%{oname} = %{version}-%{release}
+Requires:	%{name} = %{version}-%{release}
 
 %description scripts
-Utility scripts for %{oname}.
+Utility scripts for %{name}.
 
 %prep
 %setup -q -c
@@ -146,7 +146,7 @@ update-alternatives --install %{_javadir}/jaxp_transform_impl.jar \
 %preun
 {
   [ $1 -eq 0 ] || exit 0
-  update-alternatives --remove jaxp_transform_impl %{_javadir}/%{oname}.jar
+  update-alternatives --remove jaxp_transform_impl %{_javadir}/%{name}.jar
 } >/dev/null 2>&1 || :
 
 %files
