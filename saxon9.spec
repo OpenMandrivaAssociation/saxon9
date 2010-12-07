@@ -3,7 +3,7 @@
 Summary:        Java XPath, XSLT 2.0 and XQuery implementation
 Name:           %{oname}9
 Version:        9.2.0.3
-Release:        %mkrel 4
+Release:        %mkrel 5
 # net.sf.saxon.om.XMLChar is from ASL-licensed Xerces
 License:        MPL
 Group:          Development/Java
