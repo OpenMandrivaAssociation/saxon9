@@ -1,0 +1,1037 @@
+unzip -d saxon9-9.2.0.3 saxonhe9-2-0-3source.zip 
+unzip -d saxon9-9.2.0.2 saxon-resources9-2-0-2.zip/source.zip
+diff -urp saxon9-9.2.0.2 saxon9-9.2.0.3 >saxon9-9.2.0.2-9.2.0.3.patch
+
+diff -urp saxon9-9.2.0.2/api/Saxon.Api/Properties/AssemblyInfo.cs saxon9-9.2.0.3/api/Saxon.Api/Properties/AssemblyInfo.cs
+--- saxon9-9.2.0.2/api/Saxon.Api/Properties/AssemblyInfo.cs	2009-08-05 17:23:10.000000000 +0200
++++ saxon9-9.2.0.3/api/Saxon.Api/Properties/AssemblyInfo.cs	2009-10-22 10:58:50.000000000 +0200
+@@ -32,5 +32,5 @@ using System.Runtime.InteropServices;
+ // You can specify all the values or you can default the Build and Revision Numbers 
+ // by using the '*' as shown below:
+ // [assembly: AssemblyVersion("1.0.*")]
+-[assembly: AssemblyVersion("9.2.0.2")]
+-[assembly: AssemblyFileVersion("9.2.0.2")]
++[assembly: AssemblyVersion("9.2.0.3")]
++[assembly: AssemblyFileVersion("9.2.0.3")]
+diff -urp saxon9-9.2.0.2/net/sf/saxon/Configuration.java saxon9-9.2.0.3/net/sf/saxon/Configuration.java
+--- saxon9-9.2.0.2/net/sf/saxon/Configuration.java	2009-07-29 09:03:02.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/Configuration.java	2009-09-16 18:26:00.000000000 +0200
+@@ -2,12 +2,14 @@ package net.sf.saxon;
+ 
+ import net.sf.saxon.charcode.CharacterSetFactory;
+ import net.sf.saxon.event.*;
++import net.sf.saxon.evpull.PullEventSource;
+ import net.sf.saxon.expr.*;
+ import net.sf.saxon.functions.*;
+ import net.sf.saxon.instruct.*;
+ import net.sf.saxon.number.Numberer;
+ import net.sf.saxon.number.Numberer_en;
+ import net.sf.saxon.om.*;
++import net.sf.saxon.pull.PullSource;
+ import net.sf.saxon.query.ModuleURIResolver;
+ import net.sf.saxon.query.StandardModuleURIResolver;
+ import net.sf.saxon.query.StaticQueryContext;
+@@ -21,7 +23,6 @@ import net.sf.saxon.trans.*;
+ import net.sf.saxon.type.*;
+ import net.sf.saxon.value.SequenceType;
+ import net.sf.saxon.value.Whitespace;
+-import net.sf.saxon.evpull.PullEventSource;
+ import org.xml.sax.*;
+ import org.xml.sax.ext.DefaultHandler2;
+ import org.xml.sax.ext.LexicalHandler;
+@@ -1164,6 +1165,12 @@ public class Configuration implements Se
+ 
+     public void setCompileWithTracing(boolean trace) {
+         tracing = trace;
++        if (defaultXsltCompilerInfo != null) {
++            defaultXsltCompilerInfo.setCompileWithTracing(trace);
++        }
++        if (defaultStaticQueryContext != null) {
++            defaultStaticQueryContext.setCompileWithTracing(trace);
++        }  
+     }
+ 
+     /**
+@@ -3154,6 +3161,9 @@ public class Configuration implements Se
+         if (source instanceof NodeInfo) {
+             return source;
+         }
++        if (source instanceof PullSource) {
++            return source;
++        }
+         if (source instanceof PullEventSource) {
+             return source;
+         }
+diff -urp saxon9-9.2.0.2/net/sf/saxon/dotnet/NodeWrapper.java saxon9-9.2.0.3/net/sf/saxon/dotnet/NodeWrapper.java
+--- saxon9-9.2.0.2/net/sf/saxon/dotnet/NodeWrapper.java	2009-07-10 19:43:54.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/dotnet/NodeWrapper.java	2009-10-12 12:06:34.000000000 +0200
+@@ -2,7 +2,11 @@ package net.sf.saxon.dotnet;
+ 
+ import cli.System.Xml.*;
+ import net.sf.saxon.Configuration;
++import net.sf.saxon.sort.IntSet;
++import net.sf.saxon.sort.IntHashSet;
++import net.sf.saxon.sort.IntIterator;
+ import net.sf.saxon.event.Receiver;
++import net.sf.saxon.event.NamespaceReducer;
+ import net.sf.saxon.om.*;
+ import net.sf.saxon.pattern.NameTest;
+ import net.sf.saxon.pattern.NodeTest;
+@@ -772,7 +776,8 @@ public class NodeWrapper implements Node
+      */
+ 
+     public void copy(Receiver out, int whichNamespaces, boolean copyAnnotations, int locationId) throws XPathException {
+-        Navigator.copy(this, out, docWrapper.getNamePool(), whichNamespaces, copyAnnotations, locationId);
++        Receiver r = new NamespaceReducer(out);
++        Navigator.copy(this, r, docWrapper.getNamePool(), whichNamespaces, copyAnnotations, locationId);
+     }
+ 
+     /**
+@@ -791,47 +796,40 @@ public class NodeWrapper implements Node
+      */
+ 
+     public int[] getDeclaredNamespaces(int[] buffer) {
++        // Note: in a DOM created by the XML parser, all namespaces are present as attribute nodes. But
++        // in a DOM created programmatically, this is not necessarily the case. So we need to add
++        // namespace bindings for the namespace of the element and any attributes
+         if (node.get_NodeType().Value == XmlNodeType.Element) {
+             XmlElement elem = (XmlElement)node;
+             XmlNamedNodeMap atts = elem.get_Attributes();
+-
+-            if (atts == null) {
+-                return EMPTY_NAMESPACE_LIST;
+-            }
+-            int count = 0;
++            IntSet codes = new IntHashSet();
++            NamePool pool = getNamePool();
+             for (int i = 0; i < atts.get_Count(); i++) {
+                 XmlAttribute att = (XmlAttribute)atts.Item(i);
+                 String attName = att.get_Name();
+                 if (attName.equals("xmlns")) {
+-                    count++;
++                    String prefix = "";
++                    String uri = att.get_Value();
++                    codes.add(pool.allocateNamespaceCode(prefix, uri));
+                 } else if (attName.startsWith("xmlns:")) {
+-                    count++;
++                    String prefix = attName.substring(6);
++                    String uri = att.get_Value();
++                    codes.add(pool.allocateNamespaceCode(prefix, uri));
++                } else if (att.get_NamespaceURI().length() != 0) {
++                    codes.add(pool.allocateNamespaceCode(att.get_Prefix(), att.get_NamespaceURI()));
+                 }
+             }
+-            if (count == 0) {
+-                return EMPTY_NAMESPACE_LIST;
+-            } else {
+-                int[] result = (buffer == null || count > buffer.length ? new int[count] : buffer);
+-                NamePool pool = getNamePool();
+-                int n = 0;
+-                for (int i = 0; i < atts.get_Count(); i++) {
+-                    XmlAttribute att = (XmlAttribute)atts.Item(i);
+-                    String attName = att.get_Name();
+-                    if (attName.equals("xmlns")) {
+-                        String prefix = "";
+-                        String uri = att.get_Value();
+-                        result[n++] = pool.allocateNamespaceCode(prefix, uri);
+-                    } else if (attName.startsWith("xmlns:")) {
+-                        String prefix = attName.substring(6);
+-                        String uri = att.get_Value();
+-                        result[n++] = pool.allocateNamespaceCode(prefix, uri);
+-                    }
+-                }
+-                if (count < result.length) {
+-                    result[count] = -1;
+-                }
+-                return result;
++
++            if (elem.get_NamespaceURI().length() != 0) {
++                codes.add(pool.allocateNamespaceCode(elem.get_Prefix(), elem.get_NamespaceURI()));
++            }
++            int count = codes.size();
++            int[] result = new int[count];
++            int p = 0;
++            for (IntIterator ii = codes.iterator(); ii.hasNext();) {
++                 result[p++] = ii.next();
+             }
++            return result;
+         } else {
+             return null;
+         }
+diff -urp saxon9-9.2.0.2/net/sf/saxon/event/MetaTagAdjuster.java saxon9-9.2.0.3/net/sf/saxon/event/MetaTagAdjuster.java
+--- saxon9-9.2.0.2/net/sf/saxon/event/MetaTagAdjuster.java	2009-02-12 13:57:36.000000000 +0100
++++ saxon9-9.2.0.3/net/sf/saxon/event/MetaTagAdjuster.java	2009-09-15 11:49:12.000000000 +0200
+@@ -22,6 +22,7 @@ public class MetaTagAdjuster extends Pro
+     int droppingMetaTags = -1;
+     boolean inMetaTag = false;
+     boolean foundHead = false;
++    String headPrefix = null;
+     int metaCode;
+     short requiredURICode = 0;
+     AttributeCollectionImpl attributes;
+@@ -105,6 +106,7 @@ public class MetaTagAdjuster extends Pro
+             String localName = namePool.getLocalName(nameCode);
+             if (uriCode == requiredURICode && comparesEqual(localName, "head")) {
+                 foundHead = true;
++                headPrefix = namePool.getPrefix(nameCode);
+             }
+         }
+ 
+@@ -145,7 +147,7 @@ public class MetaTagAdjuster extends Pro
+             NamePool namePool = getNamePool();
+             nextReceiver.startContent();
+             String uri = (requiredURICode == 0 ? "" : NamespaceConstant.XHTML);
+-            int metaCode = namePool.allocate("", uri, "meta");
++            int metaCode = namePool.allocate(headPrefix, uri, "meta");
+             nextReceiver.startElement(metaCode, StandardNames.XS_UNTYPED, 0, 0);
+             int httpEquivCode = namePool.allocate("", "", "http-equiv");
+             nextReceiver.attribute(httpEquivCode, StandardNames.XS_UNTYPED_ATOMIC, "Content-Type", 0, 0);
+diff -urp saxon9-9.2.0.2/net/sf/saxon/event/Sender.java saxon9-9.2.0.3/net/sf/saxon/event/Sender.java
+--- saxon9-9.2.0.2/net/sf/saxon/event/Sender.java	2009-07-31 15:54:40.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/event/Sender.java	2009-09-15 09:46:16.000000000 +0200
+@@ -370,7 +370,7 @@ public class Sender {
+ 
+         ReceivingContentHandler ce;
+         final ContentHandler ch = parser.getContentHandler();
+-        if (ch instanceof ReceivingContentHandler) {
++        if (ch instanceof ReceivingContentHandler && config.isCompatible(((ReceivingContentHandler)ch).getConfiguration())) {
+             ce = (ReceivingContentHandler)ch;
+             ce.reset();
+         } else {
+diff -urp saxon9-9.2.0.2/net/sf/saxon/expr/NegateExpression.java saxon9-9.2.0.3/net/sf/saxon/expr/NegateExpression.java
+--- saxon9-9.2.0.2/net/sf/saxon/expr/NegateExpression.java	2008-01-24 14:59:24.000000000 +0100
++++ saxon9-9.2.0.3/net/sf/saxon/expr/NegateExpression.java	2009-09-15 13:40:20.000000000 +0200
+@@ -39,13 +39,11 @@ public class NegateExpression extends Un
+     }
+ 
+     public Expression typeCheck(ExpressionVisitor visitor, ItemType contextItemType) throws XPathException {
+-        // always called from ArithmeticExpression.typeCheck, so the operand has already been checked.
+-        // Now need to ensure that it's numeric
+         Expression oldop = operand;
+         RoleLocator role = new RoleLocator(RoleLocator.UNARY_EXPR, "-", 0);
+-        //role.setSourceLocator(this);
+         operand = TypeChecker.staticTypeCheck(operand, SequenceType.OPTIONAL_NUMERIC, backwardsCompatible,
+                 role, visitor);
++        operand = visitor.typeCheck(operand, contextItemType);
+         if (operand != oldop) {
+             adoptChildExpression(operand);
+         }
+diff -urp saxon9-9.2.0.2/net/sf/saxon/expr/RangeExpression.java saxon9-9.2.0.3/net/sf/saxon/expr/RangeExpression.java
+--- saxon9-9.2.0.2/net/sf/saxon/expr/RangeExpression.java	2008-01-24 15:03:02.000000000 +0100
++++ saxon9-9.2.0.3/net/sf/saxon/expr/RangeExpression.java	2009-09-15 10:10:06.000000000 +0200
+@@ -38,15 +38,16 @@ public class RangeExpression extends Bin
+         operand0 = visitor.typeCheck(operand0, contextItemType);
+         operand1 = visitor.typeCheck(operand1, contextItemType);
+ 
++        boolean backCompat = visitor.getStaticContext().isInBackwardsCompatibleMode();
+         RoleLocator role0 = new RoleLocator(RoleLocator.BINARY_EXPR, "to", 0);
+         //role0.setSourceLocator(this);
+         operand0 = TypeChecker.staticTypeCheck(
+-                operand0, SequenceType.OPTIONAL_INTEGER, false, role0, visitor);
++                operand0, SequenceType.OPTIONAL_INTEGER, backCompat, role0, visitor);
+ 
+         RoleLocator role1 = new RoleLocator(RoleLocator.BINARY_EXPR, "to", 1);
+         //role1.setSourceLocator(this);
+         operand1 = TypeChecker.staticTypeCheck(
+-                operand1, SequenceType.OPTIONAL_INTEGER, false, role1, visitor);
++                operand1, SequenceType.OPTIONAL_INTEGER, backCompat, role1, visitor);
+ 
+         return makeConstantRange();
+     }
+diff -urp saxon9-9.2.0.2/net/sf/saxon/expr/Tokenizer.java saxon9-9.2.0.3/net/sf/saxon/expr/Tokenizer.java
+--- saxon9-9.2.0.2/net/sf/saxon/expr/Tokenizer.java	2009-02-27 22:40:40.000000000 +0100
++++ saxon9-9.2.0.3/net/sf/saxon/expr/Tokenizer.java	2009-08-24 10:02:26.000000000 +0200
+@@ -669,11 +669,7 @@ public final class Tokenizer {
+                 if (nextTokenValue.indexOf('\n') >= 0) {
+                     for (int i = 0; i<nextTokenValue.length(); i++) {
+                         if (nextTokenValue.charAt(i) == '\n') {
+-                            lineNumber++;
+-                            if (newlineOffsets==null) {
+-                                newlineOffsets = new ArrayList(20);
+-                            }
+-                            newlineOffsets.add(new Integer(nextTokenStartOffset+i));
++                            incrementLineNumber(nextTokenStartOffset+i+1);
+                         }
+                     }
+                 }
+@@ -883,6 +879,19 @@ public final class Tokenizer {
+     }
+ 
+     /**
++     * Increment the line number, making a record of where in the input string the newline character occurred.
++     * @param offset the place in the input string where the newline occurred
++     */
++
++    public void incrementLineNumber(int offset) {
++        nextLineNumber++;
++        if (newlineOffsets==null) {
++            newlineOffsets = new ArrayList(20);
++        }
++        newlineOffsets.add(new Integer(offset));
++    }
++
++    /**
+      * Step back one character. If this steps back to a previous line, adjust the line number.
+      */
+ 
+diff -urp saxon9-9.2.0.2/net/sf/saxon/expr/UntypedAtomicConverter.java saxon9-9.2.0.3/net/sf/saxon/expr/UntypedAtomicConverter.java
+--- saxon9-9.2.0.2/net/sf/saxon/expr/UntypedAtomicConverter.java	2009-05-08 10:16:38.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/expr/UntypedAtomicConverter.java	2009-09-29 19:34:14.000000000 +0200
+@@ -114,7 +114,7 @@ public final class UntypedAtomicConverte
+                 requiredItemType == BuiltInAtomicType.STRING &&
+                 ((Atomizer)operand).getBaseExpression().getItemType(th) instanceof NodeTest) {
+             Expression nodeExp = ((Atomizer)operand).getBaseExpression();
+-            if (Cardinality.allowsMany(nodeExp.getCardinality())) {
++            if (nodeExp.getCardinality() != StaticProperty.EXACTLY_ONE) {
+                 SystemFunction fn = (SystemFunction)SystemFunction.makeSystemFunction(
+                         "string", new Expression[]{new ContextItemExpression()});
+                 fn.setContainer(getContainer());
+diff -urp saxon9-9.2.0.2/net/sf/saxon/functions/Document.java saxon9-9.2.0.3/net/sf/saxon/functions/Document.java
+--- saxon9-9.2.0.2/net/sf/saxon/functions/Document.java	2009-07-08 13:52:08.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/functions/Document.java	2009-09-16 11:02:42.000000000 +0200
+@@ -276,14 +276,6 @@ public class Document extends SystemFunc
+             return getFragment(doc, fragmentId, c);
+         }
+ 
+-        if (pool.isMarkedUnavailable(documentKey)) {
+-            XPathException err = new XPathException(
+-                    "Document has been marked not available: " + documentKey);
+-            err.setXPathContext(c);
+-            err.setErrorCode("FODC0005");
+-            throw err;
+-        }
+-
+         // check that the document was not written by this transformation
+ 
+         if (!controller.checkUniqueOutputDestination(documentKey)) {
+@@ -296,6 +288,15 @@ public class Document extends SystemFunc
+         }
+ 
+         try {
++
++            if (pool.isMarkedUnavailable(documentKey)) {
++                XPathException err = new XPathException(
++                        "Document has been marked not available: " + documentKey);
++                err.setXPathContext(c);
++                err.setErrorCode("FODC0005");
++                throw err;
++            }
++            
+             // Get a Source from the URIResolver
+ 
+             Source source = resolveURI(href, baseURI, documentKey, controller);
+diff -urp saxon9-9.2.0.2/net/sf/saxon/functions/FormatDate.java saxon9-9.2.0.3/net/sf/saxon/functions/FormatDate.java
+--- saxon9-9.2.0.2/net/sf/saxon/functions/FormatDate.java	2009-06-03 12:24:16.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/functions/FormatDate.java	2009-08-14 02:08:26.000000000 +0200
+@@ -81,7 +81,7 @@ public class FormatDate extends SystemFu
+ 
+         Numberer numberer = context.getConfiguration().makeNumberer(language, country);
+         FastStringBuffer sb = new FastStringBuffer(FastStringBuffer.SMALL);
+-        if (numberer instanceof Numberer_en && !"en".equals(language)) {
++        if (numberer.getClass() == Numberer_en.class && !"en".equals(language)) {
+             sb.append("[Language: en]");
+         }
+         int i = 0;
+diff -urp saxon9-9.2.0.2/net/sf/saxon/functions/IntegratedFunctionCall.java saxon9-9.2.0.3/net/sf/saxon/functions/IntegratedFunctionCall.java
+--- saxon9-9.2.0.2/net/sf/saxon/functions/IntegratedFunctionCall.java	2009-07-27 21:48:20.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/functions/IntegratedFunctionCall.java	2009-08-13 00:29:38.000000000 +0200
+@@ -42,7 +42,7 @@ public class IntegratedFunctionCall exte
+         checkArgumentCount(definition.getMinimumNumberOfArguments(), definition.getMaximumNumberOfArguments(), visitor);
+         final int args = getNumberOfArguments();
+         SequenceType[] declaredArgumentTypes = definition.getArgumentTypes();
+-        if (declaredArgumentTypes == null || declaredArgumentTypes.length == 0) {
++        if (declaredArgumentTypes == null || (args != 0 && declaredArgumentTypes.length == 0)) {
+             throw new XPathException("Integrated function " + getDisplayName() +
+                     " failed to declare its argument types");
+         }
+diff -urp saxon9-9.2.0.2/net/sf/saxon/instruct/ApplyTemplates.java saxon9-9.2.0.3/net/sf/saxon/instruct/ApplyTemplates.java
+--- saxon9-9.2.0.2/net/sf/saxon/instruct/ApplyTemplates.java	2009-04-20 16:11:44.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/instruct/ApplyTemplates.java	2009-08-24 11:51:48.000000000 +0200
+@@ -299,7 +299,7 @@ public class ApplyTemplates extends Inst
+ 
+             context.setCurrentIterator(iterator);
+             context.setCurrentMode(mode);
+-            context.setOriginatingConstructType(Location.TEMPLATE);
++            //context.setOriginatingConstructType(Location.TEMPLATE);
+             boolean lookahead = (iterator.getProperties() & SequenceIterator.LOOKAHEAD) != 0;
+             Template previousTemplate = null;
+             while(true) {
+diff -urp saxon9-9.2.0.2/net/sf/saxon/instruct/Copy.java saxon9-9.2.0.3/net/sf/saxon/instruct/Copy.java
+--- saxon9-9.2.0.2/net/sf/saxon/instruct/Copy.java	2009-07-06 11:46:58.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/instruct/Copy.java	2009-09-15 09:14:42.000000000 +0200
+@@ -64,6 +64,12 @@ public class Copy extends ElementCreator
+ 
+ 
+     public Expression typeCheck(ExpressionVisitor visitor, ItemType contextItemType) throws XPathException {
++        if (contextItemType == null) {
++            // See spec bug 7624, test case copy903err
++            XPathException err = new XPathException("Context item for xsl:copy is undefined", "XTTE0945");
++            err.setLocator(this);
++            throw err;
++        }
+         if (contextItemType instanceof NodeTest) {
+             switch (contextItemType.getPrimitiveType()) {
+                 // For elements and attributes, assume the type annotation will change
+@@ -206,6 +212,13 @@ public class Copy extends ElementCreator
+         Controller controller = context.getController();
+         SequenceReceiver out = context.getReceiver();
+         Item item = context.getContextItem();
++        if (item == null) {
++            // See spec bug 7624, test case copy904err
++            XPathException err = new XPathException("Context item for xsl:copy is undefined", "XTTE0945");
++            err.setLocator(this);
++            throw err;
++        }
++
+         if (!(item instanceof NodeInfo)) {
+             out.append(item, locationId, NodeInfo.ALL_NAMESPACES);
+             return null;
+diff -urp saxon9-9.2.0.2/net/sf/saxon/instruct/Executable.java saxon9-9.2.0.3/net/sf/saxon/instruct/Executable.java
+--- saxon9-9.2.0.2/net/sf/saxon/instruct/Executable.java	2009-06-12 12:27:28.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/instruct/Executable.java	2009-08-18 13:59:12.000000000 +0200
+@@ -834,7 +834,7 @@ public class Executable implements Seria
+     public void setSchemaAware(boolean aware) {
+         if (aware && !config.isLicensedFeature(Configuration.LicenseFeature.SCHEMA_VALIDATION)) {
+             throw new IllegalArgumentException(
+-                    "Schema-aware processing is not possible: the Configuration is not schema-aware");
++                    "Schema-aware processing is not possible: no License");
+         }
+         schemaAware = aware;
+     }
+diff -urp saxon9-9.2.0.2/net/sf/saxon/instruct/NumberInstruction.java saxon9-9.2.0.3/net/sf/saxon/instruct/NumberInstruction.java
+--- saxon9-9.2.0.2/net/sf/saxon/instruct/NumberInstruction.java	2009-06-03 12:24:16.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/instruct/NumberInstruction.java	2009-08-13 23:29:26.000000000 +0200
+@@ -202,10 +202,10 @@ public class NumberInstruction extends E
+             lang = visitor.typeCheck(lang, contextItemType);
+         }
+         if (count != null) {
+-            count = count.analyze(visitor, contextItemType);
++            visitor.typeCheck(new PatternSponsor(count), contextItemType);
+         }
+         if (from != null) {
+-            from = from.analyze(visitor, contextItemType);
++            visitor.typeCheck(new PatternSponsor(from), contextItemType);
+         }
+         return this;
+     }
+diff -urp saxon9-9.2.0.2/net/sf/saxon/instruct/SimpleContentConstructor.java saxon9-9.2.0.3/net/sf/saxon/instruct/SimpleContentConstructor.java
+--- saxon9-9.2.0.2/net/sf/saxon/instruct/SimpleContentConstructor.java	2009-04-21 12:21:36.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/instruct/SimpleContentConstructor.java	2009-09-15 19:40:34.000000000 +0200
+@@ -138,22 +138,25 @@ public class SimpleContentConstructor ex
+             XPathContext c = visitor.getStaticContext().makeEarlyEvaluationContext();
+             return new Literal(Value.asValue(evaluateItem(c)));
+         }
+-        boolean isUntyped = isAtomic || !visitor.getExecutable().isSchemaAware();
+-        if (!isUntyped) {
+-            boolean maybeElement = th.relationship(itemType, NodeKindTest.ELEMENT) != TypeHierarchy.DISJOINT;
+-            boolean maybeAttribute = th.relationship(itemType, NodeKindTest.ATTRIBUTE) != TypeHierarchy.DISJOINT;
+-            isUntyped = !maybeElement && !maybeAttribute;
+-        }
+         if (isSingleton) {
+             if (isAtomic) {
+-                return select;
+-            } else if (isUntyped) {
+-                return SystemFunction.makeSystemFunction("string", new Expression[]{select});
++                if (th.isSubType(itemType, BuiltInAtomicType.STRING)) {
++                    return select;
++                } else {
++                    return SystemFunction.makeSystemFunction("string", new Expression[]{select});
++                }
++            } else {
++                boolean isUntyped = !visitor.getExecutable().isSchemaAware();
++                if (!isUntyped) {
++                    boolean maybeElement = th.relationship(itemType, NodeKindTest.ELEMENT) != TypeHierarchy.DISJOINT;
++                    boolean maybeAttribute = th.relationship(itemType, NodeKindTest.ATTRIBUTE) != TypeHierarchy.DISJOINT;
++                    isUntyped = !maybeElement && !maybeAttribute;
++                }
++                if (isUntyped) {
++                    return SystemFunction.makeSystemFunction("string", new Expression[]{select});
++                }
+             }
+         }
+-//        if (isSingleton && isUntyped) {
+-//            return select;
+-//        }
+         return this;
+     }
+ 
+diff -urp saxon9-9.2.0.2/net/sf/saxon/instruct/TraceWrapper.java saxon9-9.2.0.3/net/sf/saxon/instruct/TraceWrapper.java
+--- saxon9-9.2.0.2/net/sf/saxon/instruct/TraceWrapper.java	2008-09-18 20:19:54.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/instruct/TraceWrapper.java	2009-10-13 20:53:56.000000000 +0200
+@@ -21,6 +21,11 @@ import java.util.Iterator;
+ public class TraceWrapper extends Instruction {
+     Expression child;   // the instruction or other expression to be traced
+ 
++    public int getImplementationMethod() {
++        return child.getImplementationMethod();
++    }
++
++
+     /**
+      * Simplify an expression. This performs any static optimization (by rewriting the expression
+      * as a different expression). The default implementation does nothing.
+@@ -273,6 +278,19 @@ public class TraceWrapper extends Instru
+     public void explain(ExpressionPresenter out) {
+         child.explain(out);
+     }
++
++    /**
++     * Evaluate an updating expression, adding the results to a Pending Update List.
++     * The default implementation of this method, which is used for non-updating expressions,
++     * throws an UnsupportedOperationException
++     *
++     * @param context the XPath dynamic evaluation context
++     * @param pul     the pending update list to which the results should be written
++     */
++
++    public void evaluatePendingUpdates(XPathContext context, PendingUpdateList pul) throws XPathException {
++        child.evaluatePendingUpdates(context, pul);
++    }        
+ }
+ 
+ //
+diff -urp saxon9-9.2.0.2/net/sf/saxon/pattern/LocationPathPattern.java saxon9-9.2.0.3/net/sf/saxon/pattern/LocationPathPattern.java
+--- saxon9-9.2.0.2/net/sf/saxon/pattern/LocationPathPattern.java	2009-01-20 11:02:38.000000000 +0100
++++ saxon9-9.2.0.3/net/sf/saxon/pattern/LocationPathPattern.java	2009-08-21 19:28:54.000000000 +0200
+@@ -60,6 +60,26 @@ public final class LocationPathPattern e
+         filter.setContainer(this);
+     }
+ 
++    public void setLineNumber(int lineNumber) {
++        super.setLineNumber(lineNumber);
++        if (parentPattern != null) {
++            parentPattern.setLineNumber(lineNumber);
++        }
++        if (ancestorPattern != null) {
++            ancestorPattern.setLineNumber(lineNumber);
++        }
++    }
++
++    public void setSystemId(String systemId) {
++        super.setSystemId(systemId);
++        if (parentPattern != null) {
++            parentPattern.setSystemId(systemId);
++        }
++        if (ancestorPattern != null) {
++            ancestorPattern.setSystemId(systemId);
++        }
++    }
++    
+ 
+     /**
+      * Set the executable containing this pattern
+diff -urp saxon9-9.2.0.2/net/sf/saxon/pattern/PatternSponsor.java saxon9-9.2.0.3/net/sf/saxon/pattern/PatternSponsor.java
+--- saxon9-9.2.0.2/net/sf/saxon/pattern/PatternSponsor.java	2008-12-08 17:02:42.000000000 +0100
++++ saxon9-9.2.0.3/net/sf/saxon/pattern/PatternSponsor.java	2009-08-13 23:29:26.000000000 +0200
+@@ -165,6 +165,16 @@ public class PatternSponsor extends Expr
+     }
+ 
+     /**
++     * Treat all subexpressions as being evaluated repeatedly
++     * @param child
++     * @return
++     */
++
++    public boolean hasLoopingSubexpression(Expression child) {
++        return true;
++    }
++
++    /**
+      * <p>Determine the static cardinality of the expression. This establishes how many items
+      * there will be in the result of the expression, at compile time (i.e., without
+      * actually evaluating the result.</p>
+diff -urp saxon9-9.2.0.2/net/sf/saxon/query/QueryParser.java saxon9-9.2.0.3/net/sf/saxon/query/QueryParser.java
+--- saxon9-9.2.0.2/net/sf/saxon/query/QueryParser.java	2009-08-04 19:25:54.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/query/QueryParser.java	2009-08-24 10:17:52.000000000 +0200
+@@ -3111,8 +3111,10 @@ public class QueryParser extends Express
+                 try {
+                     avt = makeAttributeContent(t.input, t.inputOffset, delim, true);
+                 } catch (XPathException err) {
+-                    grumble(err.getMessage());
+-                    return null;
++                    if (!err.hasBeenReported()) {
++                        grumble(err.getMessage());
++                    }
++                    throw err;
+                 }
+ 
+                 // by convention, this returns the end position when called with scanOnly set
+@@ -3123,6 +3125,16 @@ public class QueryParser extends Express
+             String val = t.input.substring(t.inputOffset - 1, end + 1);
+             // and without
+             String rval = t.input.substring(t.inputOffset, end);
++
++            // account for any newlines found in the value
++            // (note, subexpressions between curlies will have been parsed using a different tokenizer)
++            String tail = val;
++            int pos;
++            while ((pos = tail.indexOf('\n')) >= 0) {
++                t.incrementLineNumber(t.inputOffset - 1 + pos);
++                tail = tail.substring(pos+1);
++            }
++
+             t.inputOffset = end + 1;
+             // on return, the current character is the closing quote
+             c = t.nextChar();
+diff -urp saxon9-9.2.0.2/net/sf/saxon/query/StaticQueryContext.java saxon9-9.2.0.3/net/sf/saxon/query/StaticQueryContext.java
+--- saxon9-9.2.0.2/net/sf/saxon/query/StaticQueryContext.java	2009-06-03 16:27:20.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/query/StaticQueryContext.java	2009-08-21 21:01:00.000000000 +0200
+@@ -97,6 +97,7 @@ public class StaticQueryContext {
+         namePool = config.getNamePool();
+         errorListener = config.getErrorListener();
+         moduleURIResolver = config.getModuleURIResolver();
++        tracing = config.isCompileWithTracing();
+         if (errorListener instanceof StandardErrorListener) {
+             errorListener = ((StandardErrorListener)errorListener).makeAnother(Configuration.XQUERY);
+             ((StandardErrorListener)errorListener).setRecoveryPolicy(Configuration.DO_NOT_RECOVER);
+@@ -126,6 +127,7 @@ public class StaticQueryContext {
+              namePool = config.getNamePool();
+              errorListener = config.getErrorListener();
+              moduleURIResolver = config.getModuleURIResolver();
++             tracing = config.isCompileWithTracing();
+              if (errorListener instanceof StandardErrorListener) {
+                  errorListener = ((StandardErrorListener)errorListener).makeAnother(Configuration.XQUERY);
+                  ((StandardErrorListener)errorListener).setRecoveryPolicy(Configuration.DO_NOT_RECOVER);
+diff -urp saxon9-9.2.0.2/net/sf/saxon/Query.java saxon9-9.2.0.3/net/sf/saxon/Query.java
+--- saxon9-9.2.0.2/net/sf/saxon/Query.java	2009-08-05 14:48:36.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/Query.java	2009-09-22 12:39:06.000000000 +0200
+@@ -150,6 +150,13 @@ public class Query {
+             }
+ 
+             config.displayLicenseMessage();
++            if (schemaAware && !config.isLicensedFeature(Configuration.LicenseFeature.SCHEMA_AWARE_XQUERY)) {
++                if ("EE".equals(config.getEditionCode())) {
++                    quit("Installed license does not allow schema-aware query", 2);
++                } else {
++                    quit("Schema-aware query requires Saxon Enterprise Edition", 2);
++                }
++            }
+             if (pullMode) {
+                 //config.setLazyConstructionMode(true);
+             }
+@@ -277,9 +284,14 @@ public class Query {
+         } catch (SchemaException err) {
+             quit("Schema processing failed: " + err.getMessage(), 2);
+         } catch (Exception err2) {
+-            err2.printStackTrace();
+-            quit("Fatal error during query: " + err2.getClass().getName() + ": " +
+-                    (err2.getMessage() == null ? " (no message)" : err2.getMessage()), 2);
++            // TODO: move LicenseException to net.sf.saxon
++            if ("com.saxonica.config.LicenseException".equals(err2.getClass().getName())) {
++                quit(err2.getMessage(), 2);
++            } else {
++                err2.printStackTrace();
++                quit("Fatal error during query: " + err2.getClass().getName() + ": " +
++                        (err2.getMessage() == null ? " (no message)" : err2.getMessage()), 2);
++            }
+         }
+     }
+ 
+@@ -740,7 +752,7 @@ public class Query {
+                 XPathExpression expr = xpe.createExpression(argvalue);
+                 XPathDynamicContext context = expr.createDynamicContext(null);
+                 ValueRepresentation val = SequenceExtent.makeSequenceExtent(expr.iterate(context));
+-                dynamicEnv.setParameter(argname.substring(1), val);                
++                dynamicEnv.setParameter(argname.substring(1), val);
+             } else {
+                 dynamicEnv.setParameter(argname, new UntypedAtomicValue(argvalue));
+             }
+@@ -833,27 +845,42 @@ public class Query {
+             exp = staticEnv.compileQuery(q);
+         } else if (useURLs || queryFileName.startsWith("http:") || queryFileName.startsWith("file:")) {
+             ModuleURIResolver resolver = staticEnv.getModuleURIResolver();
++            boolean isStandardResolver = false;
+             if (resolver == null) {
+                 resolver = staticEnv.getConfiguration().getStandardModuleURIResolver();
++                isStandardResolver = true;
+             }
+-            String[] locations = {queryFileName};
+-            Source[] sources;
+-            try {
+-                sources = resolver.resolve(null, null, locations);
+-            } catch (Exception e) {
+-                if (e instanceof XPathException) {
+-                    throw (XPathException)e;
++            while (true) {
++                String[] locations = {queryFileName};
++                Source[] sources;
++                try {
++                    sources = resolver.resolve(null, null, locations);
++                } catch (Exception e) {
++                    if (e instanceof XPathException) {
++                        throw (XPathException)e;
++                    } else {
++                        XPathException err = new XPathException("Exception in ModuleURIResolver: ", e);
++                        err.setErrorCode("XQST0059");
++                        throw err;
++                    }
++                }
++                if (sources == null) {
++                    if (isStandardResolver) {
++                        // this should not happen
++                        quit("System problem: standard ModuleURIResolver returned null", 4);
++                    } else {
++                        resolver = staticEnv.getConfiguration().getStandardModuleURIResolver();
++                        isStandardResolver = true;
++                    }
+                 } else {
+-                    XPathException err = new XPathException("Exception in ModuleURIResolver: ", e);
+-                    err.setErrorCode("XQST0059");
+-                    throw err;
++                    if (sources.length != 1 || !(sources[0] instanceof StreamSource)) {
++                        quit("Module URI Resolver must return a single StreamSource", 2);
++                    }
++                    String queryText = QueryReader.readSourceQuery((StreamSource)sources[0], config.getNameChecker());
++                    exp = staticEnv.compileQuery(queryText);
++                    break;
+                 }
+             }
+-            if (sources.length != 1 || !(sources[0] instanceof StreamSource)) {
+-                quit("Module URI Resolver must return a single StreamSource", 2);
+-            }
+-            String queryText = QueryReader.readSourceQuery((StreamSource)sources[0], config.getNameChecker());
+-            exp = staticEnv.compileQuery(queryText);
+         } else {
+             InputStream queryStream = new FileInputStream(queryFileName);
+             staticEnv.setBaseURI(new File(queryFileName).toURI().toString());
+@@ -897,7 +924,7 @@ public class Query {
+ 
+     protected void processSource(Source sourceInput, XQueryExpression exp, DynamicQueryContext dynamicEnv) throws XPathException {
+         if (sourceInput != null) {
+-            ParseOptions options = new ParseOptions(); 
++            ParseOptions options = new ParseOptions();
+             if (showTime) {
+                 System.err.println("Processing " + sourceInput.getSystemId());
+             }
+@@ -996,7 +1023,7 @@ public class Query {
+         }
+         if (closeTraceDestination) {
+             dynamicEnv.getTraceFunctionDestination().close();
+-        }                     
++        }
+     }
+ 
+     /**
+@@ -1047,6 +1074,7 @@ public class Query {
+         System.err.println("  -projection:[on|off]  Use source document projection");
+         System.err.println("  -q:filename           Query file name");
+         System.err.println("  -qs:string            Query string (usually in quotes)");
++        System.err.println("  -qversion:1.0|1.1     XQuery language version");
+         System.err.println("  -r:classname          Use URIResolver class");
+         System.err.println("  -repeat:N             Repeat N times for performance measurement");
+         System.err.println("  -s:file|URI           Provide initial context document");
+diff -urp saxon9-9.2.0.2/net/sf/saxon/s9api/XdmAtomicValue.java saxon9-9.2.0.3/net/sf/saxon/s9api/XdmAtomicValue.java
+--- saxon9-9.2.0.2/net/sf/saxon/s9api/XdmAtomicValue.java	2009-03-23 17:45:02.000000000 +0100
++++ saxon9-9.2.0.3/net/sf/saxon/s9api/XdmAtomicValue.java	2009-10-14 21:47:08.000000000 +0200
+@@ -1,6 +1,7 @@
+ package net.sf.saxon.s9api;
+ 
+ import net.sf.saxon.Configuration;
++import net.sf.saxon.om.Name11Checker;
+ import net.sf.saxon.trans.XPathException;
+ import net.sf.saxon.type.AtomicType;
+ import net.sf.saxon.type.BuiltInAtomicType;
+@@ -119,8 +120,17 @@ public class XdmAtomicValue extends XdmI
+         if (((AtomicType)it).isAbstract()) {
+             throw new SaxonApiException("Requested type is an abstract type");
+         }
++        if (((AtomicType)it).isNamespaceSensitive()) {
++            throw new SaxonApiException("Requested type is namespace-sensitive");
++        }
+         if (((AtomicType)it).isBuiltInType()) {
+-            // TODO
++                 ConversionResult cv = StringValue.convertStringToBuiltInType(
++                    lexicalForm, (BuiltInAtomicType)it, new Name11Checker());
++            try {
++                setValue(cv.asAtomic());
++            } catch (ValidationException e) {
++                throw new SaxonApiException(e);
++            }
+         } else {
+             Configuration config = ((ConstructedItemType)type).getProcessor().getUnderlyingConfiguration();
+             ConversionResult result = new StringValue(lexicalForm).convert(
+diff -urp saxon9-9.2.0.2/net/sf/saxon/sort/StandardCollationURIResolver.java saxon9-9.2.0.3/net/sf/saxon/sort/StandardCollationURIResolver.java
+--- saxon9-9.2.0.2/net/sf/saxon/sort/StandardCollationURIResolver.java	2009-05-10 23:16:06.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/sort/StandardCollationURIResolver.java	2009-08-13 12:40:36.000000000 +0200
+@@ -1,5 +1,6 @@
+ package net.sf.saxon.sort;
+ import net.sf.saxon.Configuration;
++import net.sf.saxon.om.FastStringBuffer;
+ import net.sf.saxon.trans.XPathException;
+ 
+ import javax.xml.transform.TransformerException;
+@@ -7,6 +8,8 @@ import java.net.URI;
+ import java.net.URISyntaxException;
+ import java.util.Properties;
+ import java.util.StringTokenizer;
++import java.nio.ByteBuffer;
++import java.nio.charset.Charset;
+ 
+ /**
+  * StandardCollationURIResolver allows a Collation to be created given
+@@ -51,14 +54,14 @@ public class StandardCollationURIResolve
+                     throw new XPathException(err);
+                 }
+                 Properties props = new Properties();
+-                String query = uuri.getQuery();
++                String query = uuri.getRawQuery();
+                 StringTokenizer queryTokenizer = new StringTokenizer(query, ";&");
+                 while (queryTokenizer.hasMoreElements()) {
+                     String param = queryTokenizer.nextToken();
+                     int eq = param.indexOf('=');
+                     if (eq > 0 && eq < param.length()-1) {
+                         String kw = param.substring(0, eq);
+-                        String val = param.substring(eq + 1);
++                        String val = decode(param.substring(eq + 1));
+                         props.setProperty(kw, val);
+                     }
+                 }
+@@ -75,6 +78,83 @@ public class StandardCollationURIResolve
+             return null;
+         }
+     }
++    public static String decode(String s) {
++        // Evaluates all escapes in s, applying UTF-8 decoding if needed.  Assumes
++        // that escapes are well-formed syntactically, i.e., of the form %XX.  If a
++        // sequence of escaped octets is not valid UTF-8 then the erroneous octets
++        // are replaced with '\uFFFD'.
++        // Exception: any "%" found between "[]" is left alone. It is an IPv6 literal
++        //            with a scope_id
++        //
++
++        if (s == null) {
++            return s;
++        }
++        int n = s.length();
++        if (n == 0) {
++            return s;
++        }
++        if (s.indexOf('%') < 0) {
++            return s;
++        }
++
++        FastStringBuffer sb = new FastStringBuffer(n);
++        ByteBuffer bb = ByteBuffer.allocate(n);
++        Charset utf8 = Charset.forName("UTF-8");
++
++        // This is not horribly efficient, but it will do for now
++        char c = s.charAt(0);
++        boolean betweenBrackets = false;
++
++        for (int i = 0; i < n;) {
++            assert c == s.charAt(i);    // Loop invariant
++            if (c == '[') {
++                betweenBrackets = true;
++            } else if (betweenBrackets && c == ']') {
++                betweenBrackets = false;
++            }
++            if (c != '%' || betweenBrackets) {
++                sb.append(c);
++                if (++i >= n) {
++                    break;
++                }
++                c = s.charAt(i);
++                continue;
++            }
++            bb.clear();
++            for (; ;) {
++                assert (n - i >= 2);
++                bb.put(hex(s.charAt(++i), s.charAt(++i)));
++                if (++i >= n) {
++                    break;
++                }
++                c = s.charAt(i);
++                if (c != '%') {
++                    break;
++                }
++            }
++            bb.flip();
++            sb.append(utf8.decode(bb));
++        }
++
++        return sb.toString();
++    }
++
++    private static byte hex(char high, char low) {
++        return (byte)((hexToDec(high)<<4) | hexToDec(low));
++    }
++
++    private static int hexToDec(char c) {
++        if (c >= '0' && c <= '9') {
++            return c - '0';
++        } else if (c >= 'a' && c <= 'f') {
++            return c - 'a' + 10;
++        } else if (c >= 'A' && c <= 'F') {
++            return c - 'A' + 10;
++        } else {
++            return 0;
++        }
++    }
+ 
+ 
+ }
+diff -urp saxon9-9.2.0.2/net/sf/saxon/style/ExpressionContext.java saxon9-9.2.0.3/net/sf/saxon/style/ExpressionContext.java
+--- saxon9-9.2.0.2/net/sf/saxon/style/ExpressionContext.java	2009-07-07 15:18:26.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/style/ExpressionContext.java	2009-09-29 21:41:26.000000000 +0200
+@@ -387,7 +387,8 @@ public class ExpressionContext implement
+         if (type.getFingerprint() == StandardNames.XS_DATE_TIME_STAMP) {
+             return config.getXsdVersion() == Configuration.XSD11;
+         }
+-        return getExecutable().isSchemaAware() || type.isAllowedInBasicXSLT();
++        return type.isAllowedInBasicXSLT() ||
++                config.isLicensedFeature(Configuration.LicenseFeature.SAXON_EXTENSION_FUNCTIONS);
+     }
+ 
+     /**
+diff -urp saxon9-9.2.0.2/net/sf/saxon/style/StyleElement.java saxon9-9.2.0.3/net/sf/saxon/style/StyleElement.java
+--- saxon9-9.2.0.2/net/sf/saxon/style/StyleElement.java	2009-06-09 10:52:18.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/style/StyleElement.java	2009-10-12 16:42:26.000000000 +0200
+@@ -944,7 +944,6 @@ public abstract class StyleElement exten
+             if ("".equals(parts[0])) {
+                 // Name is unprefixed: use the default-xpath-namespace
+                 uri = getDefaultXPathNamespace();
+-                nameCode = getNamePool().allocate(parts[0], uri, lname);
+             } else {
+                 uri = getURIForPrefix(parts[0], false);
+                 if (uri == null) {
+diff -urp saxon9-9.2.0.2/net/sf/saxon/style/StyleNodeFactory.java saxon9-9.2.0.3/net/sf/saxon/style/StyleNodeFactory.java
+--- saxon9-9.2.0.2/net/sf/saxon/style/StyleNodeFactory.java	2009-06-10 21:26:30.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/style/StyleNodeFactory.java	2009-09-16 09:21:18.000000000 +0200
+@@ -107,7 +107,11 @@ public class StyleNodeFactory implements
+ 	        e.processDefaultXPathNamespaceAttribute("");
+             return e;
+ 
+-        } else if (parent instanceof XSLStylesheet && namePool.getURICode(nameCode) != 0) {
++        }
++
++        short uriCode = namePool.getURICode(nameCode);
++
++        if (parent instanceof XSLStylesheet && uriCode != 0 && uriCode != NamespaceConstant.XSLT_CODE) {
+             DataElement d = new DataElement();
+             d.setNamespaceDeclarations(namespaces, namespacesUsed);
+             d.initialise(nameCode, typeCode, attlist, parent, sequence);
+@@ -116,8 +120,7 @@ public class StyleNodeFactory implements
+ 
+         } else {   // not recognized as an XSLT element, not top-level
+ 
+-	        short uriCode = namePool.getURICode(nameCode);
+-	        String localname = namePool.getLocalName(nameCode);
++            String localname = namePool.getLocalName(nameCode);
+             StyleElement temp = null;
+ 
+             // Detect a misspelt XSLT declaration
+diff -urp saxon9-9.2.0.2/net/sf/saxon/TransformerFactoryImpl.java saxon9-9.2.0.3/net/sf/saxon/TransformerFactoryImpl.java
+--- saxon9-9.2.0.2/net/sf/saxon/TransformerFactoryImpl.java	2009-06-13 20:22:32.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/TransformerFactoryImpl.java	2009-10-22 09:59:50.000000000 +0200
+@@ -33,7 +33,7 @@ public class TransformerFactoryImpl exte
+      * Default constructor.
+      */
+     public TransformerFactoryImpl() {
+-        config = new Configuration();
++        config = Configuration.newConfiguration();
+         config.setProcessor(this);
+     }
+ 
+diff -urp saxon9-9.2.0.2/net/sf/saxon/Transform.java saxon9-9.2.0.3/net/sf/saxon/Transform.java
+--- saxon9-9.2.0.2/net/sf/saxon/Transform.java	2009-08-05 15:09:44.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/Transform.java	2009-08-18 13:49:38.000000000 +0200
+@@ -603,6 +603,13 @@ public class Transform {
+             }
+ 
+             config.displayLicenseMessage();
++            if (schemaAware && !config.isLicensedFeature(Configuration.LicenseFeature.SCHEMA_AWARE_XSLT)) {
++                if ("EE".equals(config.getEditionCode())) {
++                    quit("Installed license does not allow schema-aware transformation", 2);
++                } else {
++                    quit("Schema-aware transformation requires Saxon Enterprise Edition", 2);
++                }
++            }
+ 
+             if (additionalSchemas != null) {
+                 Query.loadAdditionalSchemas(config, additionalSchemas);
+@@ -759,9 +766,14 @@ public class Transform {
+             //err.printStackTrace();
+             quit("Transformation failed: " + err.getMessage(), 2);
+         } catch (Exception err2) {
+-            err2.printStackTrace();
+-            quit("Fatal error during transformation: " + err2.getClass().getName() + ": " + 
+-                    (err2.getMessage() == null ? " (no message)" : err2.getMessage()), 2);
++            // TODO: move LicenseException to net.sf.saxon
++            if ("com.saxonica.config.LicenseException".equals(err2.getClass().getName())) {
++                quit(err2.getMessage(), 2);
++            } else {
++                err2.printStackTrace();
++                quit("Fatal error during transformation: " + err2.getClass().getName() + ": " +
++                        (err2.getMessage() == null ? " (no message)" : err2.getMessage()), 2);
++            }
+         }
+ 
+ 
+diff -urp saxon9-9.2.0.2/net/sf/saxon/tree/TreeBuilder.java saxon9-9.2.0.3/net/sf/saxon/tree/TreeBuilder.java
+--- saxon9-9.2.0.2/net/sf/saxon/tree/TreeBuilder.java	2009-04-21 15:55:02.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/tree/TreeBuilder.java	2009-08-25 15:42:40.000000000 +0200
+@@ -8,7 +8,6 @@ import net.sf.saxon.om.AttributeCollecti
+ import net.sf.saxon.om.DocumentInfo;
+ import net.sf.saxon.om.NodeInfo;
+ import net.sf.saxon.trans.XPathException;
+-import net.sf.saxon.Configuration;
+ 
+ import java.util.ArrayList;
+ 
+diff -urp saxon9-9.2.0.2/net/sf/saxon/value/DecimalValue.java saxon9-9.2.0.3/net/sf/saxon/value/DecimalValue.java
+--- saxon9-9.2.0.2/net/sf/saxon/value/DecimalValue.java	2009-06-02 09:00:20.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/value/DecimalValue.java	2009-10-12 14:33:18.000000000 +0200
+@@ -131,6 +131,9 @@ public final class DecimalValue extends 
+                     break;
+                 }
+             }
++            if (digits.length() == 0) {
++                return DecimalValue.ZERO;
++            }
+             BigInteger bigInt = new BigInteger(digits.toString());
+             BigDecimal bigDec = new BigDecimal(bigInt, scale);
+             return new DecimalValue(bigDec);
+diff -urp saxon9-9.2.0.2/net/sf/saxon/Version.java saxon9-9.2.0.3/net/sf/saxon/Version.java
+--- saxon9-9.2.0.2/net/sf/saxon/Version.java	2009-08-05 14:11:16.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/Version.java	2009-10-22 10:06:38.000000000 +0200
+@@ -6,10 +6,10 @@ package net.sf.saxon;
+ 
+ public final class Version {
+ 
+-    private static final int[] STRUCTURED_VERSION = {9,2,0,2};
+-    private static final String VERSION = "9.2.0.2";
+-    private static final String BUILD = "080500"; //mmddhh
+-    private static final String RELEASE_DATE = "2009-08-05";
++    private static final int[] STRUCTURED_VERSION = {9,2,0,3};
++    private static final String VERSION = "9.2.0.3";
++    private static final String BUILD = "102200"; //mmddhh
++    private static final String RELEASE_DATE = "2009-10-22";
+ 
+     private Version() {
+         // class is never instantiated
+diff -urp saxon9-9.2.0.2/net/sf/saxon/xpath/XPathFactoryImpl.java saxon9-9.2.0.3/net/sf/saxon/xpath/XPathFactoryImpl.java
+--- saxon9-9.2.0.2/net/sf/saxon/xpath/XPathFactoryImpl.java	2009-07-30 19:08:00.000000000 +0200
++++ saxon9-9.2.0.3/net/sf/saxon/xpath/XPathFactoryImpl.java	2009-10-22 09:59:50.000000000 +0200
+@@ -23,7 +23,7 @@ public class XPathFactoryImpl extends XP
+      */
+ 
+     public XPathFactoryImpl() {
+-        config = new Configuration();
++        config = Configuration.newConfiguration();
+         setConfiguration(config);
+     }
+ 
+diff -urp saxon9-9.2.0.2/net/sf/saxon/xqj/SaxonXQForwardSequence.java saxon9-9.2.0.3/net/sf/saxon/xqj/SaxonXQForwardSequence.java
+--- saxon9-9.2.0.2/net/sf/saxon/xqj/SaxonXQForwardSequence.java	2009-03-25 12:26:38.000000000 +0100
++++ saxon9-9.2.0.3/net/sf/saxon/xqj/SaxonXQForwardSequence.java	2009-08-09 14:08:02.000000000 +0200
+@@ -246,6 +246,10 @@ public class SaxonXQForwardSequence exte
+     public void writeSequence(OutputStream os, Properties props) throws XQException {
+         checkNotClosed();
+         checkOnlyReadOnce();
++        if (props == null) {
++            props = new Properties();
++        }
++        props = SaxonXQSequence.setDefaultProperties(props);
+         SequenceIterator iter = iterator;
+         if (isOnItem()) {
+             iter = new Insert.InsertIterator(
