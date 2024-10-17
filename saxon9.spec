@@ -7,7 +7,7 @@ Release:        %mkrel 5
 # net.sf.saxon.om.XMLChar is from ASL-licensed Xerces
 License:        MPL
 Group:          Development/Java
-URL:            http://saxon.sourceforge.net/
+URL:            https://saxon.sourceforge.net/
 Source0:        http://dl.sourceforge.net/project/saxon/Saxon-HE/9.2/saxon-resources9-2-0-2.zip
 # There's no 9.2.0.3 resource bundle, we patch 9.2.0.2 with difference against 9.2.0.3 source bundle
 Patch0:         saxon-9.2.0.2-9.2.0.3.patch
